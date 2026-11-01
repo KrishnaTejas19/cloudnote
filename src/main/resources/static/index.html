@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CloudNote</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2230; --muted:#6b7385; --line:#e3e6ec; --accent:#2f6fed; --danger:#c93a3a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151c; --card:#1b2029; --ink:#e8ebf2; --muted:#98a1b3; --line:#2b3240; --accent:#6c9bff; --danger:#ff7b7b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); background:var(--card); font-weight:600; font-size:18px; }
+  main { max-width:1000px; margin:0 auto; padding:16px; display:grid; gap:16px; grid-template-columns: 1fr; }
+  @media (min-width: 800px) { main { grid-template-columns: 340px 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  input[type=text], textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; }
+  textarea { min-height:140px; resize:vertical; }
+  button { padding:7px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); cursor:pointer; font:inherit; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--danger); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .note-item { padding:8px 10px; border-radius:8px; cursor:pointer; border:1px solid transparent; }
+  .note-item:hover { background:var(--bg); }
+  .note-item.active { border-color:var(--accent); }
+  .note-item small, .muted { color:var(--muted); }
+  .md :is(h1,h2,h3) { margin:.6em 0 .3em; }
+  .md pre { background:var(--bg); padding:10px; border-radius:8px; overflow:auto; }
+  .md img { max-width:100%; }
+  #msg { min-height:1.4em; color:var(--danger); margin-bottom:8px; }
+  ul.files { padding-left:18px; margin:6px 0; }
+</style>
+</head>
+<body>
+<header>CloudNote</header>
+<main>
+  <section class="card">
+    <div class="row" style="margin-top:0"><strong>Your notes</strong>
+      <button class="primary" id="newBtn" style="margin-left:auto">+ New</button></div>
+    <div id="list" style="margin-top:8px"></div>
+  </section>
+
+  <section>
+    <div id="msg" role="alert"></div>
+
+    <div class="card" id="editor">
+      <input type="text" id="title" placeholder="Title" maxlength="200">
+      <textarea id="content" placeholder="Write your note (Markdown supported)" maxlength="20000" style="margin-top:8px"></textarea>
+      <div class="row">
+        <button class="primary" id="saveBtn">Save</button>
+        <button class="danger" id="delBtn" hidden>Delete</button>
+      </div>
+    </div>
+
+    <div class="card" id="viewer" style="margin-top:16px" hidden>
+      <h3 style="margin-top:0">Preview</h3>
+      <div class="md" id="preview"></div>
+      <hr style="border:0;border-top:1px solid var(--line)">
+      <strong>Attachments</strong>
+      <ul class="files" id="files"></ul>
+      <div class="row">
+        <input type="file" id="file" accept=".txt,.md,.png,.jpg,.jpeg,.gif,.webp">
+        <button id="uploadBtn">Upload</button>
+        <span class="muted">.txt .md .png .jpg .gif .webp, max 5 MB, up to 5 files</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let current = null; // currently open note (or null = new)
+
+function msg(text) { $('msg').textContent = text || ''; }
+
+async function api(path, opts) {
+  const res = await fetch('/api' + path, opts);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail || j.title || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// Markdown -> HTML, always sanitized before it touches the DOM.
+function renderMarkdown(el, text) {
+  if (window.marked && window.DOMPurify) {
+    el.innerHTML = DOMPurify.sanitize(marked.parse(text));
+  } else {
+    el.textContent = text; // CDN blocked: fall back to plain text
+  }
+}
+
+async function loadList() {
+  const notes = await api('/notes');
+  const list = $('list');
+  list.replaceChildren();
+  if (!notes.length) { list.textContent = 'No notes yet.'; list.className = 'muted'; return; }
+  list.className = '';
+  for (const n of notes) {
+    const d = document.createElement('div');
+    d.className = 'note-item' + (current && current.id === n.id ? ' active' : '');
+    const t = document.createElement('div'); t.textContent = n.title;
+    const s = document.createElement('small');
+    s.textContent = new Date(n.updatedAt).toLocaleString() + (n.attachments.length ? ' · ' + n.attachments.length + ' file(s)' : '');
+    d.append(t, s);
+    d.onclick = () => open(n.id);
+    list.append(d);
+  }
+}
+
+function show(note) {
+  current = note;
+  $('title').value = note ? note.title : '';
+  $('content').value = note ? note.content : '';
+  $('delBtn').hidden = !note;
+  $('viewer').hidden = !note;
+  if (note) {
+    renderMarkdown($('preview'), note.content);
+    const ul = $('files'); ul.replaceChildren();
+    if (!note.attachments.length) { const li = document.createElement('li'); li.className = 'muted'; li.textContent = 'None'; ul.append(li); }
+    for (const a of note.attachments) {
+      const li = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = `/api/notes/${note.id}/attachments/${a.id}`;
+      link.textContent = a.fileName;
+      const sz = document.createElement('span'); sz.className = 'muted';
+      sz.textContent = ' (' + (a.size / 1024).toFixed(1) + ' KB)';
+      li.append(link, sz); ul.append(li);
+    }
+  }
+}
+
+async function open(id) {
+  try { msg(); show(await api('/notes/' + id)); await loadList(); } catch (e) { msg(e.message); }
+}
+
+$('newBtn').onclick = () => { msg(); show(null); loadList(); };
+
+$('saveBtn').onclick = async () => {
+  try {
+    msg();
+    const body = JSON.stringify({ title: $('title').value, content: $('content').value });
+    const headers = { 'Content-Type': 'application/json' };
+    const saved = current
+      ? await api('/notes/' + current.id, { method: 'PUT', headers, body })
+      : await api('/notes', { method: 'POST', headers, body });
+    show(saved); await loadList();
+  } catch (e) { msg(e.message); }
+};
+
+$('delBtn').onclick = async () => {
+  if (!current || !confirm('Delete this note and its files?')) return;
+  try { await api('/notes/' + current.id, { method: 'DELETE' }); show(null); await loadList(); }
+  catch (e) { msg(e.message); }
+};
+
+$('uploadBtn').onclick = async () => {
+  const f = $('file').files[0];
+  if (!current || !f) { msg('Choose a file first.'); return; }
+  try {
+    msg();
+    const fd = new FormData(); fd.append('file', f);
+    await api(`/notes/${current.id}/attachments`, { method: 'POST', body: fd });
+    $('file').value = '';
+    await open(current.id);
+  } catch (e) { msg(e.message); }
+};
+
+loadList().catch(e => msg(e.message));
+</script>
+</body>
+</html>

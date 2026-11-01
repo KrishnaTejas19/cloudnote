@@ -1,0 +1,21 @@
+# Step 6. Copy to /etc/systemd/system/cloudnote.service, then fill in the 4 values below.
+[Unit]
+Description=CloudNote Spring Boot app
+After=network.target
+
+[Service]
+User=cloudnote
+Environment=SPRING_PROFILES_ACTIVE=prod
+Environment=DB_URL=jdbc:mysql://REPLACE_RDS_ENDPOINT:3306/cloudnote
+Environment=DB_USER=REPLACE_DB_USER
+Environment=DB_PASSWORD=REPLACE_DB_PASSWORD
+Environment=S3_BUCKET=REPLACE_BUCKET_NAME
+Environment=AWS_REGION=ap-south-1
+# Environment=DEBUG_ENDPOINTS=true   # uncomment only for step 10, then remove
+ExecStart=/usr/bin/java -Xmx384m -jar /opt/cloudnote/cloudnote.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
